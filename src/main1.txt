@@ -1,0 +1,138 @@
+#include <iostream>
+#include <thread>
+#include "opencv2/opencv.hpp"
+#include <libwebsockets.h>
+
+void handle_received_data(const char *data, size_t len) {
+    // 在这里处理接收到的数据
+    // data 是一个指向接收到的数据的指针，len 是数据的长度
+
+    // 你可以将数据写入文件、显示在界面上、进行进一步的处理等等
+    // 这里以输出数据为例
+    std::cout << "Received data: " << std::string(data, len) << std::endl;
+}
+
+// WebSocket回调函数
+static int callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
+    switch (reason) {
+        case LWS_CALLBACK_ESTABLISHED:
+            // WebSocket 连接建立时的处理
+            lwsl_user("WebSocket connection established\n");
+            break;
+        case LWS_CALLBACK_CLIENT_RECEIVE:
+            // 在接收到数据时触发
+            // 处理接收到的数据
+            handle_received_data((const char *)in, len);
+            break;
+
+        case LWS_CALLBACK_CLOSED:
+            // WebSocket 连接关闭时的处理
+            lwsl_user("WebSocket connection closed\n");
+            break;
+
+        default:
+            break;
+    }
+
+    return 0;
+}
+
+static struct lws_protocols protocols[] = {
+    {"http", lws_callback_http_dummy, 0, 0, 0, NULL, 0},
+    {"Video Stream", callback, 0, 0},
+    { NULL, NULL, 0, 0 } /* 最后一个协议必须是 NULL 结束的 */
+};
+
+static const struct lws_http_mount mount = {
+	/* .mount_next */		NULL,		/* linked-list "next" */
+	/* .mountpoint */		"/",		/* mountpoint URL */
+	/* .origin */			"./video-stream",  /* serve from dir */
+	/* .def */			    "index.html",	/* default filename */
+	/* .protocol */			NULL,
+	/* .cgienv */			NULL,
+	/* .extra_mimetypes */		NULL,
+	/* .interpret */		NULL,
+	/* .cgi_timeout */		0,
+	/* .cache_max_age */		0,
+	/* .auth_mask */		0,
+	/* .cache_reusable */		0,
+	/* .cache_revalidate */		0,
+	/* .cache_intermediaries */	0,
+	/* .origin_protocol */		LWSMPRO_FILE,	/* files in a dir */
+	/* .mountpoint_len */		1,		/* char count */
+	/* .basic_auth_login_file */	NULL,
+};
+
+void videodeal(lws *wsi, lws_context *context)
+{
+    cv::VideoCapture cap("D://video/sample.mp4");
+
+    // 检查视频是否成功打开
+    if (!cap.isOpened()) {
+        std::cerr << "Error: Could not open video file." << std::endl;
+        return;
+    }
+    // lws_service(context, 0) >= 0 &&
+    while ( cap.isOpened()) {
+        
+        cv::Mat frame;
+        cap >> frame;
+
+        if (frame.empty()) {
+            std::cerr << "End of video" << std::endl;
+            break;
+        }
+        
+        // 将图像数据转换为 JPEG 格式，可以使用 OpenCV 的 imencode 函数
+        std::vector<uchar> jpgBuffer;
+        cv::imencode(".jpg", frame, jpgBuffer);
+
+        // 发送 JPEG 数据给 WebSocket 客户端
+        lws_write(wsi, jpgBuffer.data(), jpgBuffer.size(), LWS_WRITE_BINARY);
+
+        // std::cout<<"send buf"<<std::endl;
+        cv::waitKey(30);
+    }
+    cap.release();
+}
+
+int main(int, char**){
+    
+    // 创建 WebSocket 监听端口
+    struct lws_context_creation_info info;
+    static struct lws_context *context;
+	int n = 0, logs = LLL_USER | LLL_ERR | LLL_WARN | LLL_NOTICE;
+    
+	lws_set_log_level(logs, NULL);
+	lwsl_user("LWS minimal ws server | visit http://localhost:9002 (-s = use TLS / https)\n");
+
+    memset(&info, 0, sizeof(info));
+    info.port = 9002; // 替换为你的 WebSocket 端口号
+    info.iface = NULL;
+    info.protocols = protocols;
+    info.mounts = &mount;
+    info.extensions = NULL;
+    info.gid = -1;
+    info.uid = -1;
+    info.options = 0;
+    info.vhost_name = "localhost";
+
+    context = lws_create_context(&info);
+    if (!context) {
+        fprintf(stderr, "WebSocket context creation failed.\n");
+        return -1;
+    }
+
+    struct lws *wsi = NULL;  // 保存连接的 WebSocket 实例
+    std::thread video_thread(videodeal, wsi, context);
+    video_thread.detach(); // 分离线程
+    
+    // videodeal(wsi, context);
+
+    // 进入 WebSocket 服务主循环
+    while (lws_service(context, 0) >= 0) {}
+    
+    // 关闭 WebSocket 连接
+    lws_context_destroy(context);
+    return 0;
+}

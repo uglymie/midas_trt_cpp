@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Video Stream</title>
+</head>
+<body>
+    <canvas id="video-canvas" width="1280" height="720"></canvas>
+
+    <script>
+        const videoCanvas = document.getElementById('video-canvas');
+        const canvasContext = videoCanvas.getContext('2d');
+        // const websocket = new WebSocket('ws://localhost:8765');
+        const websocket = new WebSocket('ws://168.168.0.17:8765');
+
+        websocket.onmessage = (event) => {
+            const imgBase64 = event.data;
+            
+            // Create an Image object
+            const img = new Image();
+            
+            // Set the source of the Image to the received Base64 data
+            img.src = 'data:image/jpeg;base64,' + imgBase64;
+            
+            // Draw the image on the canvas when it's loaded
+            img.onload = () => {
+                canvasContext.drawImage(img, 0, 0, videoCanvas.width, videoCanvas.height);
+            };
+        };
+
+        websocket.onclose = (event) => {
+            console.error('WebSocket closed:', event);
+        };
+
+        websocket.onerror = (event) => {
+            console.error('WebSocket error:', event);
+        };
+    </script>
+</body>
+</html>
